@@ -1,9 +1,12 @@
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:provider/provider.dart';
+import 'package:pie_chart/pie_chart.dart';
 
 import 'package:top_dj_app/models/dj_model.dart';
+import 'package:top_dj_app/services/socket_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -13,42 +16,82 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<DjModel> djs = [
-    DjModel(id: '1', name: 'Armin Van Buuren', votes: 5),
-    DjModel(id: '2', name: 'David Guetta', votes: 3),
-    DjModel(id: '3', name: 'Martin Garrix', votes: 4),
-    DjModel(id: '4', name: 'Miss Monique', votes: 3),
-  ];
+  List<DjModel> djs = [];
+
+  @override
+  void initState() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
+    socketService.socket.on('active-djs', _handleActiveDjs);
+
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.off('active-djs');
+    super.dispose();
+  }
+
+  _handleActiveDjs(dynamic payload) {
+    djs = (payload as List).map((dj) => DjModel.fromMap(dj)).toList();
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
+    final socketService = Provider.of<SocketService>(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Top Djs'),
-        backgroundColor: Colors.red,
+        title: const Text(
+          'Top Djs',
+          style: TextStyle(color: Colors.black),
+        ),
+        backgroundColor: Colors.white,
         centerTitle: true,
         elevation: 1,
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 10),
+            child: (socketService.serverStatus == ServerStatus.Online)
+                ? Icon(
+                    Icons.check_circle,
+                    color: Colors.blue[300],
+                  )
+                : Icon(
+                    Icons.offline_bolt,
+                    color: Colors.red[300],
+                  ),
+          ),
+        ],
       ),
-      body: ListView.builder(
-        itemCount: djs.length,
-        itemBuilder: (context, index) => _djTile(djs[index]),
+      body: Column(
+        children: [
+          _showGraph(),
+          Expanded(
+            child: ListView.builder(
+              itemCount: djs.length,
+              itemBuilder: (context, index) => _djTile(djs[index]),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: addNewDj,
-        backgroundColor: Colors.red,
         child: const Icon(Icons.add),
       ),
     );
   }
 
   Widget _djTile(DjModel dj) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
     return Dismissible(
       key: Key(dj.id),
       direction: DismissDirection.startToEnd,
-      onDismissed: (direction) {
-        print('direction $direction');
-        print('id ${dj.id}');
-      },
+      onDismissed: (_) => socketService.socket.emit('delete-dj', {'id': dj.id}),
       background: Container(
         color: Colors.red,
         padding: const EdgeInsets.only(left: 16),
@@ -69,9 +112,7 @@ class _HomePageState extends State<HomePage> {
           '${dj.votes}',
           style: const TextStyle(fontSize: 18),
         ),
-        onTap: () {
-          print(dj.name);
-        },
+        onTap: () => socketService.socket.emit('vote-dj', {'id': dj.id}),
       ),
     );
   }
@@ -82,28 +123,26 @@ class _HomePageState extends State<HomePage> {
     if (Platform.isAndroid) {
       return showDialog(
         context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('New Dj:'),
-            content: TextField(
-              controller: textController,
-            ),
-            actions: [
-              MaterialButton(
-                onPressed: () => addDjToList(textController.text),
-                elevation: 5,
-                textColor: Colors.red,
-                child: const Text('Add'),
-              )
-            ],
-          );
-        },
+        builder: (_) => AlertDialog(
+          title: const Text('New Dj:'),
+          content: TextField(
+            controller: textController,
+          ),
+          actions: [
+            MaterialButton(
+              onPressed: () => addDjToList(textController.text),
+              elevation: 5,
+              textColor: Colors.red,
+              child: const Text('Add'),
+            )
+          ],
+        ),
       );
     }
 
     showCupertinoDialog(
       context: context,
-      builder: (context) => CupertinoAlertDialog(
+      builder: (_) => CupertinoAlertDialog(
         title: const Text('New Dj:'),
         content: CupertinoTextField(controller: textController),
         actions: [
@@ -123,11 +162,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   void addDjToList(String name) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+
     if (name.length > 1) {
-      djs.add(DjModel(id: DateTime.now.toString(), name: name, votes: 0));
-      setState(() {});
+      socketService.socket.emit('add-dj', {'name': name});
     }
 
     Navigator.pop(context);
+  }
+
+  // Mostrar grafica
+  Widget _showGraph() {
+    Map<String, double> dataMap = {};
+
+    for (var dj in djs) {
+      dataMap.addAll({dj.name: dj.votes.toDouble()});
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      height: 200,
+      child: PieChart(dataMap: dataMap),
+    );
   }
 }
